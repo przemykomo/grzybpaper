@@ -40,7 +40,7 @@ async fn get_random_image_folder() -> anyhow::Result<Url> {
         //         .next()
         //         .is_some_and(|x| x.len() == 3 && x.chars().all(|x| x.is_ascii_digit() || x == '/'))
         // })
-        .filter(|x| x.0.text().next().is_some_and(|x| !x.contains('_')))
+        .filter(|x| x.0.text().next().is_some_and(|x| !x.contains('_') && !x.contains('-')))
         .filter_map(|x| x.0.attr("href").map(|a| (a, x.1)))
         .next()
         // .max_by_key(|x| x.1)
