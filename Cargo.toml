@@ -11,4 +11,5 @@ scraper = "0.24.0"
 time = { version = "0.3.44", features = ["parsing", "macros"] }
 tokio = { version = "1.*", features = ["full"] }
 url = "2.5.7"
-wallpaper = "3.2.0"
+more-wallpapers = "0.4.0"
+camino = "1.2.1"

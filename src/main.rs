@@ -1,6 +1,8 @@
 use std::{env::temp_dir, fs::File, io::Write, str::FromStr, time::Duration};
 
 use anyhow::anyhow;
+use camino::Utf8PathBuf;
+use more_wallpapers::WallpaperBuilder;
 use rand::prelude::IndexedRandom;
 use reqwest::IntoUrl;
 use tokio::time::sleep;
@@ -40,7 +42,11 @@ async fn get_random_image_folder() -> anyhow::Result<Url> {
         //         .next()
         //         .is_some_and(|x| x.len() == 3 && x.chars().all(|x| x.is_ascii_digit() || x == '/'))
         // })
-        .filter(|x| x.0.text().next().is_some_and(|x| !x.contains('_') && !x.contains('-')))
+        .filter(|x| {
+            x.0.text()
+                .next()
+                .is_some_and(|x| !x.contains('_') && !x.contains('-'))
+        })
         .filter_map(|x| x.0.attr("href").map(|a| (a, x.1)))
         .next()
         // .max_by_key(|x| x.1)
@@ -54,7 +60,7 @@ async fn get_random_image_folder() -> anyhow::Result<Url> {
         .map_err(|_| anyhow!("Invaild grzyby.pl folder"))
 }
 
-async fn get_random_image(folder_url: Url) -> anyhow::Result<Url> {
+async fn get_random_images(folder_url: Url, amount: usize) -> anyhow::Result<Vec<Url>> {
     let html = reqwest_get_text(folder_url.join("?C=M;O=D")?).await?;
     let page = scraper::Html::parse_document(&html);
     let folders =
@@ -70,21 +76,18 @@ async fn get_random_image(folder_url: Url) -> anyhow::Result<Url> {
         .collect::<Vec<_>>();
     images.pop();
 
-    // dbg!(&images);
-
-    let Some(image) = images.choose(&mut rand::rng()) else {
-        return Err(anyhow!("No images inside grzyby.pl folder"));
-    };
-
-    folder_url
-        .join(image)
-        .map_err(|_| anyhow!("Invaild grzyby.pl image"))
+    let urls = images
+        .choose_multiple(&mut rand::rng(), amount)
+        .map(|i| {
+            folder_url
+                .join(i)
+                .map_err(|_| anyhow!("Invaild grzyby.pl image"))
+        })
+        .collect();
+    urls
 }
 
-async fn set_grzyb_wallpaper() -> anyhow::Result<()> {
-    let folder_url = get_random_image_folder().await?;
-    let image_url = get_random_image(folder_url).await?;
-
+async fn image_url_to_file(image_url: &Url) -> anyhow::Result<Utf8PathBuf> {
     let image_name = image_url
         .as_str()
         .rsplit_once("/")
@@ -92,13 +95,32 @@ async fn set_grzyb_wallpaper() -> anyhow::Result<()> {
         .unwrap_or(image_url.as_str())
         .to_owned();
 
-    let bytes = reqwest::get(image_url).await?.bytes().await?;
+    let bytes = reqwest::get(image_url.clone())
+        .await?
+        .bytes()
+        .await?;
 
     let path = temp_dir().join(image_name);
     let mut file = File::create_new(path.clone())?;
     file.write_all(&bytes)?;
-    wallpaper::set_from_path(path.to_str().ok_or(anyhow!("Non-unicode characters."))?)
-        .map_err(|e| anyhow!(e.to_string()))?;
+    Utf8PathBuf::from_path_buf(path).map_err(|_| anyhow!("Non UTF-8 characters"))
+}
+
+async fn set_grzyb_wallpaper() -> anyhow::Result<()> {
+    let wb = WallpaperBuilder::new()?;
+    let amount = wb.screen_count();
+
+    let folder_url = get_random_image_folder().await?;
+    let images = get_random_images(folder_url, amount).await?;
+
+    let mut files = Vec::new();
+    for image_url in images {
+        files.push(image_url_to_file(&image_url).await?);
+    }
+    let default_wallpaper = files[0].clone();
+    wb.set_wallpapers_from_vec(files, default_wallpaper, more_wallpapers::Mode::Crop)?;
+    // wallpaper::set_from_path(path.to_str().ok_or(anyhow!("Non-unicode characters."))?)
+    //     .map_err(|e| anyhow!(e.to_string()))?;
     // wallpaper::set_mode(wallpaper::Mode::Span).unwrap();
     // print!("{}", path.display());
 
