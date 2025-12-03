@@ -5,7 +5,7 @@ use camino::Utf8PathBuf;
 use more_wallpapers::WallpaperBuilder;
 use rand::prelude::IndexedRandom;
 use reqwest::IntoUrl;
-use tokio::time::sleep;
+use tokio::{task::JoinSet, time::sleep};
 use url::Url;
 
 use crate::apache_files_scraper::apache_grzyby_index_iter;
@@ -87,7 +87,7 @@ async fn get_random_images(folder_url: Url, amount: usize) -> anyhow::Result<Vec
     urls
 }
 
-async fn image_url_to_file(image_url: &Url) -> anyhow::Result<Utf8PathBuf> {
+async fn image_url_to_file(image_url: Url) -> anyhow::Result<Utf8PathBuf> {
     let image_name = image_url
         .as_str()
         .rsplit_once("/")
@@ -95,7 +95,7 @@ async fn image_url_to_file(image_url: &Url) -> anyhow::Result<Utf8PathBuf> {
         .unwrap_or(image_url.as_str())
         .to_owned();
 
-    let bytes = reqwest::get(image_url.clone())
+    let bytes = reqwest::get(image_url)
         .await?
         .bytes()
         .await?;
@@ -113,16 +113,17 @@ async fn set_grzyb_wallpaper() -> anyhow::Result<()> {
     let folder_url = get_random_image_folder().await?;
     let images = get_random_images(folder_url, amount).await?;
 
-    let mut files = Vec::new();
+    let mut set = JoinSet::new();
+
     for image_url in images {
-        files.push(image_url_to_file(&image_url).await?);
+        set.spawn(image_url_to_file(image_url));
     }
+
+    let files: anyhow::Result<Vec<_>> = set.join_all().await.into_iter().collect();
+    let files = files?;
+
     let default_wallpaper = files[0].clone();
     wb.set_wallpapers_from_vec(files, default_wallpaper, more_wallpapers::Mode::Crop)?;
-    // wallpaper::set_from_path(path.to_str().ok_or(anyhow!("Non-unicode characters."))?)
-    //     .map_err(|e| anyhow!(e.to_string()))?;
-    // wallpaper::set_mode(wallpaper::Mode::Span).unwrap();
-    // print!("{}", path.display());
 
     Ok(())
 }
